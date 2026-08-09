@@ -6,8 +6,11 @@ RSS 피더 서비스 - 주제별 뉴스를 모아 정적 RSS XML 파일로 생�
   1) config/topics.yaml 에 정의된 각 주제(topic)를 순회한다.
   2) 주제에 딸린 source(현재는 Google 뉴스 검색)마다 RSS를 가져와 파싱한다.
   3) data/<slug>.json 캐시와 URL 해시로 비교해 이미 본 기사를 걸러낸다.
-  4) 새/기존 기사를 합쳐 캐시를 갱신하고, feedgen으로 docs/feeds/<slug>.xml 을 만든다.
-  5) 전체 주제를 모아 docs/index.html(피드 목록 페이지)도 갱신한다.
+  4) 피드에 실릴 상위 기사(FEED_MAX_ITEMS)는 Google 뉴스 리다이렉트 링크를 실제
+     언론사 URL로 해석한 뒤, 본문을 가져와 요약이 아닌 본문 전체(가능한 만큼)를
+     content:encoded 로 채운다. 실패하면 기존 요약으로 자동 폴백한다.
+  5) 새/기존 기사를 합쳐 캐시를 갱신하고, feedgen으로 docs/feeds/<slug>.xml 을 만든다.
+  6) 전체 주제를 모아 docs/index.html(피드 목록 페이지)도 갱신한다.
 
 GitHub Actions 스케줄러가 이 스크립트를 주기 실행하고, 변경된 data/·docs/ 를
 커밋 -> GitHub Pages 로 배포하는 구조를 전제로 한다.
@@ -26,8 +29,10 @@ from urllib.parse import quote
 
 import feedparser
 import requests
+import trafilatura
 import yaml
 from feedgen.feed import FeedGenerator
+from googlenewsdecoder import gnewsdecoder
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / "config" / "topics.yaml"
@@ -45,6 +50,10 @@ REQUEST_HEADERS = {
 
 CACHE_MAX_ITEMS = 200  # data/<slug>.json 에 보관하는 최대 기사 수 (과거 이력)
 FEED_MAX_ITEMS = 50  # docs/feeds/<slug>.xml 에 담는 최대 기사 수
+
+ARTICLE_FETCH_TIMEOUT = 12  # 원문 기사 페이지 요청 타임아웃(초)
+ARTICLE_CONTENT_MAX_CHARS = 6000  # content:encoded 에 담을 본문 최대 길이
+ARTICLE_FETCH_DELAY = 0.3  # 언론사/구글 서버 부담을 줄이기 위한 요청 간 딜레이(초)
 
 
 def load_config() -> dict:
@@ -107,6 +116,61 @@ def fetch_source_items(source: dict, source_label: str) -> list[dict]:
     return items
 
 
+def resolve_article_url(google_link: str) -> str | None:
+    """Google 뉴스 리다이렉트 링크를 실제 언론사 기사 URL로 해석한다. 실패 시 None."""
+    try:
+        result = gnewsdecoder(google_link, interval=ARTICLE_FETCH_DELAY)
+    except Exception as exc:  # googlenewsdecoder는 다양한 예외를 던질 수 있음
+        print(f"    [경고] 링크 해석 실패: {exc}")
+        return None
+    if result.get("status") and result.get("decoded_url"):
+        return result["decoded_url"]
+    return None
+
+
+def fetch_article_content(url: str) -> str | None:
+    """기사 원문 페이지에서 본문만 추출한다. 실패하면 None을 돌려준다."""
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=ARTICLE_FETCH_TIMEOUT)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"    [경고] 기사 본문 요청 실패 ({url}): {exc}")
+        return None
+
+    text = trafilatura.extract(
+        response.text,
+        url=url,
+        include_comments=False,
+        favor_precision=True,
+    )
+    if not text:
+        return None
+
+    text = text.strip()
+    if len(text) > ARTICLE_CONTENT_MAX_CHARS:
+        text = text[:ARTICLE_CONTENT_MAX_CHARS].rstrip() + " […]"
+    return text
+
+
+def enrich_item_content(item: dict) -> bool:
+    """item에 본문(content)을 채운다. 이미 있거나 실패하면 아무것도 하지 않는다."""
+    if item.get("content"):
+        return False
+
+    real_url = resolve_article_url(item["link"])
+    if not real_url:
+        return False
+
+    content = fetch_article_content(real_url)
+    time.sleep(ARTICLE_FETCH_DELAY)
+    if not content:
+        return False
+
+    item["content"] = content
+    item["resolved_link"] = real_url
+    return True
+
+
 def load_cache(slug: str) -> list[dict]:
     cache_path = DATA_DIR / f"{slug}.json"
     if not cache_path.exists():
@@ -150,8 +214,18 @@ def process_topic(topic: dict) -> list[dict]:
     combined.sort(key=lambda i: i["published"], reverse=True)
     combined = combined[:CACHE_MAX_ITEMS]
 
+    # 피드에 실제로 노출되는 상위 기사만 본문을 채운다(전체 캐시를 매번 다시
+    # 긁으면 실행 시간이 너무 길어지므로). 이미 본문이 있는 기사는 건너뛴다.
+    enriched = 0
+    for item in combined[:FEED_MAX_ITEMS]:
+        if enrich_item_content(item):
+            enriched += 1
+
     save_cache(slug, combined)
-    print(f"  {slug}: 신규 {len(new_items)}건, 전체 캐시 {len(combined)}건")
+    print(
+        f"  {slug}: 신규 {len(new_items)}건, 본문 보강 {enriched}건, "
+        f"전체 캐시 {len(combined)}건"
+    )
     return combined
 
 
@@ -173,6 +247,8 @@ def generate_feed_xml(topic: dict, items: list[dict], pages_base_url: str) -> No
         fe.title(item["title"])
         fe.link(href=item["link"])
         fe.description(item.get("summary", ""))
+        if item.get("content"):
+            fe.content(item["content"], type="CDATA")
         fe.pubDate(item["published"])
         if item.get("source"):
             fe.category(term=item["source"])
