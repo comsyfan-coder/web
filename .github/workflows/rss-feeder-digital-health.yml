@@ -1,9 +1,10 @@
 name: RSS 피더 - 디지털헬스 동향
 
 on:
-  schedule:
-    # 6시간마다 (UTC 기준 0, 6, 12, 18시)
-    - cron: "0 */6 * * *"
+  # 6시간마다 자동 실행되던 cron 스케줄은 비활성화함(2026-08-09). 다시 켜려면
+  # 아래 주석을 해제하면 됨.
+  # schedule:
+  #   - cron: "0 */6 * * *"
   workflow_dispatch: {}
   push:
     branches: [main]

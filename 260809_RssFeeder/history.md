@@ -1,5 +1,12 @@
 # History
 
+## 2026-08-09 (5)
+6시간마다 자동 실행되던 cron 스케줄을 비활성화함(사용자 요청).
+
+`.github/workflows/rss-feeder-digital-health.yml`의 `schedule` 블록을 주석 처리.
+`workflow_dispatch`(Actions 탭 수동 실행)와 `push`(코드 변경 시 자동 1회 실행)
+트리거는 그대로 유지. 다시 6시간마다 자동 실행하려면 주석을 해제하면 됨.
+
 ## 2026-08-09 (4)
 403(봇 차단)이 확인된 언론사 도메인은 본문 요청 자체를 건너뛰도록 처리함.
 
