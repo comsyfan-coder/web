@@ -25,7 +25,7 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import feedparser
 import requests
@@ -128,6 +128,16 @@ def resolve_article_url(google_link: str) -> str | None:
     return None
 
 
+def is_blocked_domain(url: str, blocked_domains: set[str]) -> bool:
+    """url의 호스트가 차단 목록에 있으면 True. www. 접두사는 무시하고 비교한다."""
+    if not blocked_domains:
+        return False
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return host in blocked_domains
+
+
 def fetch_article_content(url: str) -> str | None:
     """기사 원문 페이지에서 본문만 추출한다. 실패하면 None을 돌려준다."""
     try:
@@ -152,13 +162,19 @@ def fetch_article_content(url: str) -> str | None:
     return text
 
 
-def enrich_item_content(item: dict) -> bool:
-    """item에 본문(content)을 채운다. 이미 있거나 실패하면 아무것도 하지 않는다."""
+def enrich_item_content(item: dict, blocked_domains: set[str]) -> bool:
+    """item에 본문(content)을 채운다. 이미 있거나 실패/차단 도메인이면 아무것도 하지 않는다."""
     if item.get("content"):
         return False
 
-    real_url = resolve_article_url(item["link"])
+    # 링크 해석 결과는 캐시에 남겨두고 재사용한다 - 차단 도메인이든 아니든
+    # 매 실행마다 Google 링크 해석 요청을 다시 보낼 필요는 없다.
+    real_url = item.get("resolved_link") or resolve_article_url(item["link"])
     if not real_url:
+        return False
+    item["resolved_link"] = real_url
+
+    if is_blocked_domain(real_url, blocked_domains):
         return False
 
     content = fetch_article_content(real_url)
@@ -167,7 +183,6 @@ def enrich_item_content(item: dict) -> bool:
         return False
 
     item["content"] = content
-    item["resolved_link"] = real_url
     return True
 
 
@@ -190,7 +205,7 @@ def save_cache(slug: str, items: list[dict]) -> None:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def process_topic(topic: dict) -> list[dict]:
+def process_topic(topic: dict, blocked_domains: set[str]) -> list[dict]:
     slug = topic["slug"]
     existing_items = load_cache(slug)
     seen_hashes = {item["hash"] for item in existing_items}
@@ -217,14 +232,19 @@ def process_topic(topic: dict) -> list[dict]:
     # 피드에 실제로 노출되는 상위 기사만 본문을 채운다(전체 캐시를 매번 다시
     # 긁으면 실행 시간이 너무 길어지므로). 이미 본문이 있는 기사는 건너뛴다.
     enriched = 0
+    blocked = 0
     for item in combined[:FEED_MAX_ITEMS]:
-        if enrich_item_content(item):
+        if item.get("content"):
+            continue
+        if enrich_item_content(item, blocked_domains):
             enriched += 1
+        elif item.get("resolved_link") and is_blocked_domain(item["resolved_link"], blocked_domains):
+            blocked += 1
 
     save_cache(slug, combined)
     print(
         f"  {slug}: 신규 {len(new_items)}건, 본문 보강 {enriched}건, "
-        f"전체 캐시 {len(combined)}건"
+        f"차단 도메인 건너뜀 {blocked}건, 전체 캐시 {len(combined)}건"
     )
     return combined
 
@@ -294,10 +314,11 @@ def main() -> None:
     config = load_config()
     pages_base_url = config["pages_base_url"]
     topics = config["topics"]
+    blocked_domains = {d.lower() for d in config.get("blocked_domains", [])}
 
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] RSS 피더 갱신 시작 ({len(topics)}개 주제)")
     for topic in topics:
-        items = process_topic(topic)
+        items = process_topic(topic, blocked_domains)
         generate_feed_xml(topic, items, pages_base_url)
 
     generate_index_html(topics, pages_base_url)
