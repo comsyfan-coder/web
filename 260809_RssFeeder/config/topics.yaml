@@ -1,0 +1,25 @@
+# RSS 피더가 구독을 생성할 주제 목록.
+# 새 주제를 추가하려면 topics 아래에 항목을 하나 추가하면 된다(코드 수정 불필요).
+# 같은 주제 안에 sources를 여러 개(다른 검색어, 다른 언어권, 특정 사이트 등) 넣으면
+# 하나의 피드로 합쳐지고 중복 기사는 자동으로 제거된다.
+
+# actions/deploy-pages 워크플로가 docs/ 폴더를 Pages 사이트 루트로 배포하므로,
+# 실제 배포 URL에는 "260809_RssFeeder/docs/" 경로가 붙지 않는다.
+pages_base_url: "https://comsyfan-coder.github.io/web/"
+
+topics:
+  - slug: digital-health
+    title: "디지털헬스 동향"
+    description: "디지털 헬스케어, 원격의료, 디지털 치료제, 헬스케어 AI 관련 최신 뉴스 모음"
+    link: "https://news.google.com/"
+    sources:
+      - type: google_news
+        query: "디지털헬스 OR 디지털치료제 OR 원격의료 OR 헬스케어 AI"
+        hl: ko
+        gl: KR
+        ceid: "KR:ko"
+      - type: google_news
+        query: "digital health OR digital therapeutics OR telehealth OR healthtech"
+        hl: en-US
+        gl: US
+        ceid: "US:en"

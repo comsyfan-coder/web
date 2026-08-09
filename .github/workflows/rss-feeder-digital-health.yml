@@ -1,0 +1,70 @@
+name: RSS 피더 - 디지털헬스 동향
+
+on:
+  schedule:
+    # 6시간마다 (UTC 기준 0, 6, 12, 18시)
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - "260809_RssFeeder/**"
+      - ".github/workflows/rss-feeder-digital-health.yml"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# 배포 중 다른 배포가 끼어들지 않도록 Pages 배포는 순차 실행
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  fetch-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r 260809_RssFeeder/requirements.txt
+
+      - name: Fetch feeds and regenerate RSS
+        run: python 260809_RssFeeder/scripts/fetch_feeds.py
+
+      - name: Commit updated feed data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add 260809_RssFeeder/data 260809_RssFeeder/docs
+          if git diff --cached --quiet; then
+            echo "변경 사항 없음"
+          else
+            git commit -m "chore: RSS 피드 자동 업데이트 [skip ci]"
+            git push
+          fi
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 260809_RssFeeder/docs
+
+  deploy:
+    needs: fetch-and-commit
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
