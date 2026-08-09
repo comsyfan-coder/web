@@ -14,7 +14,7 @@ MVP는 **"디지털헬스 동향"** 한 개 주제로 시작하며, `config/topi
 ### 동작 흐름
 
 ```
-GitHub Actions (cron, 6시간마다)
+GitHub Actions (수동 실행 workflow_dispatch, 또는 코드 변경 push. cron은 현재 비활성화)
   └─ scripts/fetch_feeds.py 실행
        1. config/topics.yaml 에서 주제 목록/검색어 로드
        2. 주제별 source(Google 뉴스 검색 RSS)를 요청·파싱
@@ -128,9 +128,13 @@ topics:
 
 ### 스케줄
 
-기본은 6시간마다(UTC 0/6/12/18시) 자동 실행됩니다. 주기를 바꾸려면 워크플로 파일의
-`cron` 값을 수정하세요. `workflow_dispatch`도 등록되어 있어 Actions 탭에서 수동 실행도
-가능합니다.
+6시간마다(UTC 0/6/12/18시) 자동 실행되는 cron은 현재 **비활성화**되어 있습니다
+(`.github/workflows/rss-feeder-digital-health.yml`의 `schedule` 블록이 주석 처리됨).
+다시 켜려면 그 주석을 해제하면 됩니다. 대신 아래 두 가지로 갱신할 수 있습니다.
+
+- **수동 실행**: 저장소 Actions 탭 → "RSS 피더 - 디지털헬스 동향" 워크플로 → Run workflow
+- **자동 실행(코드 변경 시)**: `260809_RssFeeder/**` 또는 워크플로 파일 자체가 바뀌어
+  `main`에 push되면 자동으로 한 번 실행됩니다(`push` 트리거는 그대로 유지).
 
 ## 비고 및 추가 내용
 
