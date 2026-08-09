@@ -7,6 +7,13 @@
 # 실제 배포 URL에는 "260809_RssFeeder/docs/" 경로가 붙지 않는다.
 pages_base_url: "https://comsyfan-coder.github.io/web/"
 
+# 봇 차단(403 등)으로 본문 추출이 계속 실패하는 언론사 도메인 목록.
+# 여기 등록된 도메인은 요청 자체를 시도하지 않고 곧바로 요약(summary)으로 넘어간다.
+# 실행 로그에서 "[경고] 기사 본문 요청 실패 (403 ...)"가 반복되는 도메인을 추가하면 된다.
+blocked_domains:
+  - news1.kr
+  - einnews.com
+
 topics:
   - slug: digital-health
     title: "디지털헬스 동향"

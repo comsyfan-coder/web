@@ -1,5 +1,27 @@
 # History
 
+## 2026-08-09 (4)
+403(봇 차단)이 확인된 언론사 도메인은 본문 요청 자체를 건너뛰도록 처리함.
+
+**계기**
+직전(3) 배포에서 상위 50건 중 news1.kr, einnews.com 두 곳이 매번 403으로 실패하는
+것을 확인함 — 실패해도 요약으로 폴백되긴 하지만 매 실행마다 같은 요청을 반복하고
+로그에 경고가 계속 쌓임.
+
+**변경 내용**
+- `config/topics.yaml`에 `blocked_domains` 목록 추가 (기본값: `news1.kr`, `einnews.com`).
+  실행 로그에 403 경고가 반복되는 도메인을 여기 추가하면 됨(코드 수정 불필요).
+- `is_blocked_domain(url, blocked_domains)`: URL의 호스트(www. 접두사 무시)가 목록에
+  있는지 확인.
+- `enrich_item_content`: 링크를 해석한 뒤 차단 도메인이면 `fetch_article_content`
+  호출 자체를 생략. 해석된 URL은 성공/차단 여부와 무관하게 `item["resolved_link"]`에
+  캐시해 두어, 다음 실행부터는 링크 재해석(Google 호출)도 건너뜀.
+- `process_topic`: 로그에 "차단 도메인 건너뜀 N건"을 추가해 상태를 바로 확인 가능하게 함.
+- 로컬 검증: 모킹으로 (1) 차단 도메인에 대해 `fetch_article_content`가 전혀 호출되지
+  않는지, (2) `resolved_link`가 캐시되어 재사용되는지 확인. 실제 `data/digital-health.json`은
+  테스트 중 일시적으로 변경됐다가 `git checkout`으로 원복함(커밋 전 실수로 섞여
+  들어가지 않도록 주의).
+
 ## 2026-08-09 (3)
 피드 항목에 기사 요약 대신(정확히는 요약 + 가능하면) 본문 전체를 채우는 기능을 추가함.
 
