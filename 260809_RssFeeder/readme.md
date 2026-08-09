@@ -19,9 +19,12 @@ GitHub Actions (cron, 6시간마다)
        1. config/topics.yaml 에서 주제 목록/검색어 로드
        2. 주제별 source(Google 뉴스 검색 RSS)를 요청·파싱
        3. data/<slug>.json 캐시와 URL 해시로 비교 -> 신규 기사만 추가
-       4. 캐시(최근 200건 유지)를 다시 저장
-       5. feedgen으로 docs/feeds/<slug>.xml 재생성 (최근 50건)
-       6. docs/index.html(피드 목록 페이지) 재생성
+       4. 피드에 실릴 상위 기사(최근 50건)에 한해 Google 뉴스 링크를 실제
+          언론사 URL로 해석하고, 본문을 가져와 최대한 채운다(실패 시 요약으로 폴백)
+       5. 캐시(최근 200건 유지, 본문 포함)를 다시 저장
+       6. feedgen으로 docs/feeds/<slug>.xml 재생성 (요약은 description,
+          본문은 content:encoded)
+       7. docs/index.html(피드 목록 페이지) 재생성
   └─ 변경된 data/, docs/ 를 저장소에 커밋 & 푸시
   └─ docs/ 를 GitHub Pages 아티팩트로 업로드 & 배포
 ```
@@ -45,13 +48,35 @@ requirements.txt     - Python 의존성
 기사 링크에서 쿼리스트링을 제거한 뒤 SHA-256 해시를 구해 `data/<slug>.json` 캐시에 있는
 해시와 비교하는 방식으로 중복을 걸러내고, 새 기사만 캐시에 추가합니다.
 
+### 본문 삽입 방식
+
+Google 뉴스 RSS가 주는 `summary`는 한두 줄짜리 짧은 요약뿐이라, 가능하면 기사 본문을
+피드에 함께 실어 리더기에서 바로 읽을 수 있게 했습니다.
+
+1. `resolve_article_url` — Google 뉴스가 감싼 리다이렉트 링크(`news.google.com/rss/articles/...`)를
+   `googlenewsdecoder`로 실제 언론사 기사 URL로 해석합니다.
+2. `fetch_article_content` — 해석된 URL을 요청해서 받은 HTML을 `trafilatura`로 파싱해
+   광고/네비게이션/댓글 등을 제외한 본문만 추출합니다(`ARTICLE_CONTENT_MAX_CHARS`=6000자
+   까지, 넘으면 잘라서 `[…]` 표시).
+3. 성공하면 `item["content"]`에 저장되고, feedgen이 이를 RSS의 `content:encoded`
+   (요약과 별개로 대부분의 리더기가 "본문"으로 인식하는 필드)에 채웁니다. 기존
+   `description`(짧은 요약)은 그대로 유지됩니다.
+4. 링크 해석이나 본문 요청·추출 중 하나라도 실패하면(언론사 봇 차단, 페이월, 타임아웃 등)
+   조용히 실패하고 요약만 있는 상태로 남습니다 — 다음 실행 때 그 기사가 여전히 상위
+   50건 안에 있으면 다시 시도합니다.
+5. 실행 시간을 제한하기 위해 **피드에 실제로 노출되는 상위 `FEED_MAX_ITEMS`(50)건에
+   대해서만** 본문을 채우며, 이미 본문이 있는 기사는 건너뜁니다. 그래서 최초 실행 이후에는
+   새로 상위 50위 안에 들어온 기사만 추가로 요청하게 됩니다.
+
 ## 기술스택
 
 - **Python 3.11**
 - **feedparser** — Google 뉴스 RSS 파싱
-- **feedgen** — RSS 2.0 피드 생성
+- **feedgen** — RSS 2.0 피드 생성 (요약: `description`, 본문: `content:encoded`)
 - **requests** — HTTP 요청
 - **PyYAML** — `topics.yaml` 설정 로드
+- **googlenewsdecoder** — Google 뉴스 리다이렉트 링크를 실제 기사 URL로 해석
+- **trafilatura** — 기사 HTML에서 본문만 추출(광고/네비게이션 제거)
 - **GitHub Actions** — cron 스케줄링 및 자동 커밋/배포
 - **GitHub Pages** — `docs/` 폴더 정적 서빙 (RSS XML 파일 호스팅)
 
@@ -107,6 +132,11 @@ topics:
 - Google 뉴스 검색 RSS는 별도 API 키 없이 사용할 수 있어 MVP에 채택했습니다. 이후 네이버
   검색 API나 특정 언론사/기관 RSS를 소스로 추가해 커버리지를 넓힐 수 있습니다.
 - 캐시(`data/<slug>.json`)는 저장소에 함께 커밋되므로, GitHub Actions 러너가 매번 새로
-  시작해도 "이전에 이미 내보낸 기사" 상태가 유지됩니다.
-- 현재 기사 링크는 Google 뉴스가 제공하는 리다이렉트 링크를 그대로 사용합니다. 원문 URL을
-  직접 따라가고 싶다면 리다이렉트를 해제하는 로직을 `fetch_source_items`에 추가하면 됩니다.
+  시작해도 "이전에 이미 내보낸 기사" 상태가 유지됩니다. 한 번 추출된 본문도 캐시에
+  같이 저장되어 재요청하지 않습니다.
+- RSS의 `<link>`는 여전히 Google 뉴스 리다이렉트 링크입니다(클릭하면 Google을 거쳐
+  이동). 해석된 원문 URL은 `item["resolved_link"]`(캐시 JSON)에 별도로 남겨두며,
+  필요하면 `<link>` 자체를 원문 URL로 바꾸도록 `generate_feed_xml`을 수정할 수 있습니다.
+- 언론사가 스크래핑을 막아두었거나 자바스크립트 렌더링이 필요한 사이트는 본문 추출이
+  실패할 수 있습니다(이 경우 요약만 노출). 본문 전문을 그대로 재배포하는 것은 저작권
+  이슈가 있을 수 있어, 개인 구독용으로 사용하고 길이도 6000자로 제한해 두었습니다.

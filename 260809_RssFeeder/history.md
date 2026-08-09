@@ -1,5 +1,33 @@
 # History
 
+## 2026-08-09 (3)
+피드 항목에 기사 요약 대신(정확히는 요약 + 가능하면) 본문 전체를 채우는 기능을 추가함.
+
+**변경 내용**
+- `googlenewsdecoder`, `trafilatura` 의존성 추가.
+- `resolve_article_url`: Google 뉴스 리다이렉트 링크를 실제 언론사 URL로 해석.
+- `fetch_article_content`: 해석된 URL의 HTML을 받아 trafilatura로 본문만 추출
+  (최대 6000자, 초과 시 `[…]`로 자름).
+- `enrich_item_content`: 위 두 함수를 조합해 캐시 항목에 `content` 필드를 채움. 실패하면
+  아무것도 하지 않고 다음 실행에서 재시도(요약은 항상 유지되므로 사용자 입장에서는
+  실패해도 빈 피드가 아니라 요약만 있는 상태로 보임).
+- `process_topic`: 실행 시간을 bounded하게 유지하려고 캐시 전체(최대 200건)가 아니라
+  **피드에 실제로 노출되는 상위 `FEED_MAX_ITEMS`(50)건**에 대해서만 본문을 채우고,
+  이미 채워진 항목은 건너뜀.
+- `generate_feed_xml`: `content`가 있으면 RSS `content:encoded`(CDATA)로 출력, `description`은
+  기존 요약을 그대로 유지.
+- 로컬 검증: 샌드박스에서 `news.google.com`/실제 언론사 접근이 막혀 있어, (1) 합성 HTML로
+  trafilatura 추출 자체를 검증하고 (2) `resolve_article_url`/`fetch_article_content`를
+  모킹해 `process_topic` → `generate_feed_xml` 전체 배관과 실패 시 요약 폴백 동작을
+  단위 테스트로 확인함. 실제 Google 뉴스 링크 해석/본문 추출은 다음 GitHub Actions
+  실행에서 최종 확인 필요.
+
+**알아둘 점**
+- RSS `<link>`는 여전히 Google 리다이렉트 링크. 해석된 원문 URL은 캐시의
+  `resolved_link` 필드에만 저장됨.
+- 언론사 봇 차단/페이월/JS 렌더링 사이트는 본문 추출이 실패할 수 있음 — 이 경우
+  요약만 노출되고 다음 실행에서 다시 시도함.
+
 ## 2026-08-09 (2)
 `comsyfan-coder/app` 저장소에서 `comsyfan-coder/web` 저장소로 프로그램을 이전함. Pages 배포
 URL이 저장소명에 따라 달라지므로 `config/topics.yaml`의 `pages_base_url`과 `readme.md`의
